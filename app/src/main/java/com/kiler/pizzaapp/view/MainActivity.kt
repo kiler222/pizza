@@ -1,7 +1,7 @@
 package com.kiler.pizzaapp.view
 
 import android.content.Intent
-import android.graphics.Color
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -9,6 +9,7 @@ import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import com.bumptech.glide.Glide
@@ -16,8 +17,10 @@ import com.bumptech.glide.Priority
 import com.bumptech.glide.load.DecodeFormat
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.request.RequestOptions
-
-import com.facebook.CallbackManager
+import com.facebook.*
+import com.facebook.internal.CallbackManagerImpl
+import com.facebook.login.LoginManager
+import com.facebook.login.LoginResult
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
 import com.kiler.pizzaapp.R
@@ -28,6 +31,7 @@ import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
+import org.json.JSONException
 
 
 @AndroidEntryPoint
@@ -50,11 +54,13 @@ class MainActivity  : AppCompatActivity() {
     private  var fab_close:Animation? = null
     private  var rotate_forward:Animation? = null
     private  var rotate_backward:Animation? = null
+    private var PRIVATE_MODE = 0
+    private val PREF_NAME = "pizza-data"
+    private var sharedPref: SharedPreferences? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-//        setSupportActionBar(findViewById(R.id.toolbar))
 
         pizzaViewModel = ViewModelProvider(this).get(PizzaViewModel::class.java)
 
@@ -75,6 +81,10 @@ class MainActivity  : AppCompatActivity() {
             R.anim.rotate_backward
         )
 
+        sharedPref = applicationContext.getSharedPreferences(PREF_NAME, PRIVATE_MODE)
+
+
+        setCallbackManager()
 
         setSubscribtions()
 
@@ -82,40 +92,83 @@ class MainActivity  : AppCompatActivity() {
             animateFAB()
         }
 
-
         fabRecipe!!.setOnClickListener { view ->
+
+            val accessToken = AccessToken.getCurrentAccessToken()
+            if (accessToken != null) {
+                Log.e(TAG, "token = ${accessToken.token}")
+            } else {
+                Log.e(TAG, "token = null; trzeba zalogować")
+            }
 
 
             if (pizzaData != null && pizzaData!!.title != "") {
-
                 val intent = Intent(this, DetailsActivity::class.java)
                 val bundle = Bundle()
                 bundle.putParcelable("pizzaData", pizzaData)
                 intent.putExtra("pizzaData", bundle)
                 startActivity(intent)
-
             } else {
-
                 Snackbar.make(view, getString(R.string.pizza_not_ready), Snackbar.LENGTH_SHORT)
                     .setAction("Action", null).show()
-
             }
-
         }
 
         fabFacebook!!.setOnClickListener {
-
-
-            callbackManager = CallbackManager.Factory.create()
-
-
+            setFacebookLogin()
         }
+    }
+
+    private fun setCallbackManager() {
+        callbackManager = CallbackManager.Factory.create()
+        LoginManager.getInstance()
+            .registerCallback(callbackManager, object : FacebookCallback<LoginResult> {
+                override fun onSuccess(loginResult: LoginResult) {
+                    Log.e(TAG, "result @@@onSuccess")
+                    val request = GraphRequest.newMeRequest(
+                        loginResult.accessToken
+                    ) { `object`, response ->
+                        Log.e(TAG, "result @@@response: $response")
+                        try {
+                            val name = `object`.getString("name")
+                            val profile_img = `object`.getJSONObject("picture").getJSONObject("data").getString("url")
+                            val editor = sharedPref!!.edit()
+                            editor.putString("fb_username", name)
+                            editor.putString("fb_avatar", profile_img)
+                            editor.apply()
+                            Toast.makeText(applicationContext, getString(R.string.logged_in, name), Toast.LENGTH_LONG).show()
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            Log.e(TAG, "jsonexcept = ${e.localizedMessage}")
+                        }
+                    }
+                    val parameters = Bundle()
+                    parameters.putString("fields", "id,name,picture.width(300).height(300)")
+                    request.parameters = parameters
+                    request.executeAsync()
+                }
+
+                override fun onCancel() {
+                    Log.e(TAG, "result @@@onCancel")
+                }
+
+                override fun onError(error: FacebookException) {
+                    Log.e(TAG, "result @@@onError: " + error.message)
+                }
+            })
+    }
 
 
+    fun setFacebookLogin() {
+        LoginManager.getInstance()
+            .logInWithReadPermissions(this@MainActivity, listOf("public_profile"))
+    }
 
-
-
-
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CallbackManagerImpl.RequestCodeOffset.Login.toRequestCode()) {
+            callbackManager.onActivityResult(requestCode, resultCode, data)
+        }
     }
 
 
@@ -128,28 +181,20 @@ class MainActivity  : AppCompatActivity() {
             fabRecipe!!.isClickable = false
             isFabOpen = false
             shadowView!!.visibility = View.INVISIBLE
-            Log.d("PJ", "close")
         } else {
             fabMain!!.startAnimation(rotate_forward)
             fabFacebookView!!.startAnimation(fab_open)
             fabRecipeView!!.startAnimation(fab_open)
-//            fabFacebookView!!.visibility = View.VISIBLE
-//            fabRecipeView!!.visibility = View.VISIBLE
             fabFacebook!!.isClickable = true
             fabRecipe!!.isClickable = true
             isFabOpen = true
             shadowView!!.visibility = View.VISIBLE
 //            window.statusBarColor = Color.parseColor("#20111111")
 //            window.navigationBarColor = Color.parseColor("#20111111")
-            Log.d("PJ", "open")
         }
     }
 
 
-    override fun onResume() {
-        super.onResume()
-//        animateFAB()
-    }
 
     private fun setSubscribtions() {
         subscribe(
@@ -174,12 +219,9 @@ class MainActivity  : AppCompatActivity() {
                     Glide.with(this)
                         .applyDefaultRequestOptions(requestOption)
                         .load(url)
-//                        .thumbnail(0.5f)
                         .into(pizzaImgView!!)
 
                     pizzaImgView.visibility = View.VISIBLE
-
-
 
 
                 }, {
@@ -189,21 +231,6 @@ class MainActivity  : AppCompatActivity() {
     }
 
 
-//    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-//        // Inflate the menu; this adds items to the action bar if it is present.
-//        menuInflater.inflate(R.menu.menu_main, menu)
-//        return true
-//    }
-//
-//    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-//        // Handle action bar item clicks here. The action bar will
-//        // automatically handle clicks on the Home/Up button, so long
-//        // as you specify a parent activity in AndroidManifest.xml.
-//        return when (item.itemId) {
-//            R.id.action_settings -> true
-//            else -> super.onOptionsItemSelected(item)
-//        }
-//    }
 
     private fun subscribe(disposable: Disposable): Disposable {
         subscriptions.add(disposable)
