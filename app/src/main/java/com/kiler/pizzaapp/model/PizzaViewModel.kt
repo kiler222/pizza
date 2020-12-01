@@ -6,12 +6,13 @@ import androidx.lifecycle.ViewModel
 import com.kiler.pizzaapp.data.PizzaData
 import com.kiler.pizzaapp.repository.PizzaRepository
 import io.reactivex.Observable
+import io.reactivex.Single
 
 class PizzaViewModel @ViewModelInject constructor(private val repository: PizzaRepository) : ViewModel() {
 
     private val TAG = "PJviewModel"
 
-    fun getPizzaData(): Observable<PizzaData> {
+    fun getPizzaData(): Single<PizzaData> {
         return repository.getPizzaData()
             .map {
                 it
